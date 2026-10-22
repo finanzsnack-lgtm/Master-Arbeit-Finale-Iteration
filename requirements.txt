@@ -1,0 +1,7 @@
+python-dotenv>=1.0
+requests>=2.31
+pytest>=7.4
+httpx>=0.27  # FastAPI-TestClient (tests/test_zugriffsschutz.py)
+claude-agent-sdk>=0.1
+fastapi>=0.110
+uvicorn[standard]>=0.29
