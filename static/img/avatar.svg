@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 120" role="img" aria-label="Reisebot-Avatar">
+  <!-- EINE durchgehende Silhouette (Kopf + Oberkörper als ein einziger Pfad) statt zweier separat
+       positionierter Formen – die vorherige Version (Rechteck + Ellipse, nur an einem Punkt
+       beruehrend) erzeugte eine sichtbare Naht/Kerbe an der Uebergangsstelle. -->
+  <path d="M18 30 C18 15 29 7 44 7 L56 7 C71 7 82 15 82 30 L82 52 C82 60 78 65 72 68
+           C86 72 94 82 94 96 C94 109 83 119 66 119 L34 119
+           C17 119 6 109 6 96 C6 82 14 72 28 68 C22 65 18 60 18 52 Z" fill="#2f6f4f"/>
+  <!-- Antennen/Ohren -->
+  <rect x="8" y="27" width="6" height="16" rx="3" fill="#2f6f4f"/>
+  <circle cx="11" cy="23" r="6" fill="#2f6f4f"/>
+  <rect x="86" y="27" width="6" height="16" rx="3" fill="#2f6f4f"/>
+  <circle cx="89" cy="23" r="6" fill="#2f6f4f"/>
+  <!-- Gesichtsfläche -->
+  <rect x="28" y="15" width="44" height="28" rx="12" fill="#eaf3ee"/>
+  <!-- Augen (froh, geschlossen) -->
+  <path d="M37 27 Q41 22 45 27" stroke="#2f6f4f" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <path d="M55 27 Q59 22 63 27" stroke="#2f6f4f" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <!-- Lächeln -->
+  <path d="M41 35 Q50 41 59 35" stroke="#2f6f4f" stroke-width="3" stroke-linecap="round" fill="none"/>
+</svg>

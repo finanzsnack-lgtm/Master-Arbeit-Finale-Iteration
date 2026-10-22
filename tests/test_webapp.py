@@ -1,0 +1,164 @@
+"""
+Tests für die deterministische Logik in webapp.py (WebIOKanal.zeige_karte, Hotel-Vorschau-Karte
+mitten im Chat) – kein echter Server/WebSocket, nur Fake-Objekte für Websocket/MapsClient. Der
+restliche WebSocket-/FastAPI-Verdrahtungscode (Routing, Verbindungsaufbau) wird wie bei chat.py
+manuell verifiziert, nicht per pytest (siehe tests/conftest.py-Philosophie).
+"""
+import asyncio
+
+import webapp
+from src.api.typen import Unterkunft
+
+
+class _FakeWebSocket:
+    def __init__(self):
+        self.gesendete_nachrichten: list[dict] = []
+
+    async def send_json(self, daten: dict) -> None:
+        self.gesendete_nachrichten.append(daten)
+
+
+class _FakeMapsClient:
+    def __init__(self, erfolgreich: bool):
+        self._erfolgreich = erfolgreich
+
+    def lade_foto(self, foto_referenz: str, ziel_pfad: str, max_breite: int = 640) -> bool:
+        if self._erfolgreich:
+            with open(ziel_pfad, "w", encoding="utf-8") as datei:
+                datei.write("fake")
+        return self._erfolgreich
+
+
+def test_zeige_karte_sendet_foto_url_bei_erfolgreichem_download(tmp_path, monkeypatch):
+    monkeypatch.setattr(webapp, "erzeuge_client", lambda: _FakeMapsClient(erfolgreich=True))
+    websocket = _FakeWebSocket()
+    kanal = webapp.WebIOKanal(websocket, tmp_path / "sitzung123")
+    unterkunft = Unterkunft(id=1, name="Hotel Zentral", x=0, y=0, preisniveau=2, zertifiziert_nachhaltig=False,
+                             place_id="hz1", foto_referenz="ref1")
+
+    asyncio.run(kanal.zeige_karte(unterkunft))
+
+    [nachricht] = websocket.gesendete_nachrichten
+    assert nachricht["typ"] == "hotel_karte"
+    assert nachricht["name"] == "Hotel Zentral"
+    assert nachricht["foto_url"] == "/fotos/sitzung123/hz1.jpg"
+    assert nachricht["preis_pro_nacht_euro"] is not None
+    assert "query_place_id=hz1" in nachricht["maps_link"]
+
+
+def test_zeige_karte_ohne_foto_referenz_sendet_keine_foto_url(tmp_path, monkeypatch):
+    monkeypatch.setattr(webapp, "erzeuge_client", lambda: _FakeMapsClient(erfolgreich=True))
+    websocket = _FakeWebSocket()
+    kanal = webapp.WebIOKanal(websocket, tmp_path / "sitzung123")
+    unterkunft = Unterkunft(id=1, name="Hotel Zentral", x=0, y=0, preisniveau=2, zertifiziert_nachhaltig=False, place_id="hz1")
+
+    asyncio.run(kanal.zeige_karte(unterkunft))
+
+    [nachricht] = websocket.gesendete_nachrichten
+    assert nachricht["foto_url"] is None
+
+
+def test_zeige_karte_bei_fehlgeschlagenem_download_sendet_keine_foto_url(tmp_path, monkeypatch):
+    monkeypatch.setattr(webapp, "erzeuge_client", lambda: _FakeMapsClient(erfolgreich=False))
+    websocket = _FakeWebSocket()
+    kanal = webapp.WebIOKanal(websocket, tmp_path / "sitzung123")
+    unterkunft = Unterkunft(id=1, name="Hotel Zentral", x=0, y=0, preisniveau=2, zertifiziert_nachhaltig=False,
+                             place_id="hz1", foto_referenz="ref1")
+
+    asyncio.run(kanal.zeige_karte(unterkunft))
+
+    [nachricht] = websocket.gesendete_nachrichten
+    assert nachricht["foto_url"] is None
+
+
+def test_zeige_karte_ohne_preisniveau_sendet_keinen_preis(tmp_path, monkeypatch):
+    monkeypatch.setattr(webapp, "erzeuge_client", lambda: _FakeMapsClient(erfolgreich=True))
+    websocket = _FakeWebSocket()
+    kanal = webapp.WebIOKanal(websocket, tmp_path / "sitzung123")
+    unterkunft = Unterkunft(id=1, name="Hotel Zentral", x=0, y=0, preisniveau=None, zertifiziert_nachhaltig=False, place_id="hz1")
+
+    asyncio.run(kanal.zeige_karte(unterkunft))
+
+    [nachricht] = websocket.gesendete_nachrichten
+    assert nachricht["preis_pro_nacht_euro"] is None
+
+
+# Iteration 2 (Demo-Feedback: Quick Replies + Ladeindikator, siehe
+# doku/28_stage28_iteration2_ux_feedback_konzepte/README.md).
+
+def test_bot_sagt_ohne_schnellantworten_marker_sendet_reinen_text(tmp_path, monkeypatch):
+    monkeypatch.setattr(webapp, "erzeuge_client", lambda: _FakeMapsClient(erfolgreich=True))
+    websocket = _FakeWebSocket()
+    kanal = webapp.WebIOKanal(websocket, tmp_path / "sitzung123")
+
+    asyncio.run(kanal.bot_sagt("Wie ist Ihr Name?"))
+
+    [nachricht] = websocket.gesendete_nachrichten
+    assert nachricht == {"typ": "bot", "text": "Wie ist Ihr Name?"}
+
+
+def test_bot_sagt_mit_schnellantworten_marker_trennt_optionen_ab(tmp_path, monkeypatch):
+    monkeypatch.setattr(webapp, "erzeuge_client", lambda: _FakeMapsClient(erfolgreich=True))
+    websocket = _FakeWebSocket()
+    kanal = webapp.WebIOKanal(websocket, tmp_path / "sitzung123")
+
+    asyncio.run(kanal.bot_sagt("Möchten Sie ein Auto mieten?\n[SCHNELLANTWORTEN: Ja | Nein]"))
+
+    [nachricht] = websocket.gesendete_nachrichten
+    assert nachricht["text"] == "Möchten Sie ein Auto mieten?"
+    assert nachricht["schnellantworten"] == ["Ja", "Nein"]
+
+
+def test_zeige_status_sendet_phase(tmp_path, monkeypatch):
+    monkeypatch.setattr(webapp, "erzeuge_client", lambda: _FakeMapsClient(erfolgreich=True))
+    websocket = _FakeWebSocket()
+    kanal = webapp.WebIOKanal(websocket, tmp_path / "sitzung123")
+
+    asyncio.run(kanal.zeige_status("plant_reise"))
+
+    [nachricht] = websocket.gesendete_nachrichten
+    assert nachricht == {"typ": "status", "phase": "plant_reise"}
+
+
+def test_ergebnis_nachricht_enthaelt_keinen_nachhaltigkeits_nudge():
+    # Im fertigen Reiseplan ist die Verkehrsmittelwahl bereits getroffen; der Nudge wirkt nur im
+    # F13-Dialog. Weder die Abschlussnachricht noch die Web-Oberfläche greifen ihn noch auf.
+    from types import SimpleNamespace
+
+    from src.api.typen import ReiseAlternative
+    from src.ausgabe.reiseplan import Reiseplan
+    from src.optimierung.verkehrsmittelwahl import BewerteteAlternative
+
+    bahn = BewerteteAlternative(
+        alternative=ReiseAlternative(verkehrsmittel="Bahn", dauer_minuten=300, kosten_euro=80, distanz_km=500),
+        co2_kg=9.5, score=0.1,
+    )
+    state = SimpleNamespace(
+        reiseplan=Reiseplan(hinreise=bahn, tagesrouten=[], rueckreise=bahn),
+        abschluss_meldungen=["Reiseplan gespeichert."],
+        nachhaltigkeits_nudge="Die Bahn braucht nur 60 Minuten länger, spart aber 74.5 kg CO2.",
+    )
+
+    nachricht = webapp.ergebnis_nachricht(state, lambda place_id: None)
+
+    assert nachricht["typ"] == "ergebnis"
+    assert "nachhaltigkeits_nudge" not in nachricht
+    assert "spart aber" not in nachricht["text"]
+    index_html = (webapp._STATIC_VERZEICHNIS / "index.html").read_text(encoding="utf-8")
+    assert "nachhaltigkeits_nudge" not in index_html
+
+
+def test_co2_ampel_ist_nicht_interaktiv_gestaltet():
+    # Befund aus Phase 68: ein farbig hinterlegter CO₂-Wert wirkte wie eine getroffene Auswahl. Die
+    # CO₂-Einordnung (Demo-Feedback, Station 42) bleibt deshalb ohne Rahmen, Hintergrund, Hover-
+    # Effekt und Zeiger-Cursor; nur der kleine Punkt davor (::before) ist eingefärbt.
+    import re
+
+    index_html = (webapp._STATIC_VERZEICHNIS / "index.html").read_text(encoding="utf-8")
+    regeln = re.findall(r"(\.co2-ampel[^{]*)\{([^}]*)\}", index_html)
+    assert regeln, "CSS-Regeln für .co2-ampel nicht gefunden"
+    for selektor, inhalt in regeln:
+        assert ":hover" not in selektor
+        assert "border:" not in inhalt and "cursor:" not in inhalt and "box-shadow" not in inhalt
+        if "::before" not in selektor:
+            assert "background" not in inhalt
