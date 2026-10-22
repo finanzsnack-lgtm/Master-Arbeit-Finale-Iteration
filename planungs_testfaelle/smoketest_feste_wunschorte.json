@@ -1,0 +1,22 @@
+{
+  "name": "Test",
+  "email": null,
+  "reisebegleitung": ["allein"],
+  "reiseleitung_gewuenscht": false,
+  "reisezeitraum_rohtext": "5 Tage",
+  "zielregionen": ["München"],
+  "wohnort": "Hildesheim",
+  "budget_gesamt": 1500.0,
+  "verkehrsmittel_praeferenz": ["Bahn"],
+  "lokaler_transport_praeferenz": "zu Fuß und öffentliche Verkehrsmittel",
+  "tagesstart_praeferenz": "ab 9 bis 19 Uhr",
+  "tagesstart_minuten": 540,
+  "tagesende_minuten": 1140,
+  "lokaler_kontakt_wichtig": true,
+  "unterkunft_anforderungen": "zentral gelegen",
+  "aktivitaeten_interessen": ["Museum", "Park", "Stadtführung", "Kochkurs"],
+  "feste_wunschorte": [
+    {"name": "Deutsches Museum München", "dauer_minuten": 180},
+    {"name": "Schloss Neuschwanstein", "uhrzeit_minuten": 900, "dauer_minuten": 120}
+  ]
+}
