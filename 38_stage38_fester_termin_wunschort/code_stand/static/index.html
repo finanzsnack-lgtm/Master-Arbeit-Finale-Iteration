@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reisebot</title>
+<style>
+  /* Iteration 2, Gesamtdesign "Urlaubsgefühl" (Betreuer-Feedback Punkte 1 und 2: Seitenkonzept
+     überarbeiten, Chat größer und bei Bedarf ausblendbar, ansprechender). Farbwelt: Grün bleibt der
+     Akzent für Nachhaltigkeit und Bedienelemente, ergänzt um Sand- (Hintergrund) und Meerestöne
+     (zweiter Akzent). Alle Text-/Hintergrund-Paare erreichen mindestens WCAG-AA-Kontrast (4,5:1). */
+  :root {
+    --bg: #f7f1e6;
+    --flaeche: #fffdf9;
+    --rand: #e6dccb;
+    --text: #2b2924;
+    --text-schwach: #675f53;
+    --akzent: #2f6f4f;
+    --akzent-hell: #e4f1e8;
+    --meer: #1f5f7a;
+    --meer-hell: #e3eff4;
+    --sand-dunkel: #c9a66b;
+    --bot-blase: #f1ebe0;
+    --nutzer-blase: var(--akzent);
+    --schatten: 0 2px 6px rgba(60, 45, 20, 0.06), 0 8px 24px rgba(60, 45, 20, 0.08);
+    --schatten-hover: 0 4px 10px rgba(60, 45, 20, 0.10), 0 14px 32px rgba(60, 45, 20, 0.14);
+    /* Wärmere Überschriftenschrift ohne externes Font-CDN (keine externe Anfrage zur Laufzeit):
+       Serifenschriften, die auf gängigen Systemen vorinstalliert sind, Georgia als breiter Rückfall. */
+    --schrift-titel: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  /* Grundlayout (schmale Fenster, unter 980px) während des Gesprächs: Kopfzeile, darunter ein
+     schmales Bildband der Galerie, darunter der Chat, der die restliche Fensterhöhe füllt. Dadurch
+     bleibt die Eingabezeile unten sichtbar und nur der Verlauf scrollt. "100dvh" berücksichtigt
+     auf Mobilgeräten die ein- und ausfahrende Browserleiste, "100vh" ist der Rückfall. */
+  main {
+    width: 100%;
+    max-width: 1400px;
+    height: 100vh;
+    height: 100dvh;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  header h1 {
+    font-family: var(--schrift-titel);
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin: 0 0 2px;
+    color: var(--meer);
+  }
+  header p {
+    margin: 0;
+    color: var(--text-schwach);
+    font-size: 0.9rem;
+  }
+
+  /* Galerie "Inspiration" (Vorbild Mindtrip: Fotos neben dem Chat; Trend zu großflächigen,
+     immersiven Bildern). Reine Stimmungsbilder aus static/img/galerie/, sichtbar beschriftet,
+     damit sie nicht wie ein geplantes Ziel oder wie der spätere Reiseplan wirken. Auf schmalen
+     Fenstern ein Bildband über dem Chat (Reihenfolge per "order"), ab 980px eine eigene Spalte. */
+  #galerie {
+    position: relative;
+    order: -1;
+    flex: 0 0 96px;
+    border-radius: 16px;
+    overflow: hidden;
+    background: linear-gradient(135deg, var(--meer) 0%, var(--akzent) 100%);
+  }
+  main > header { order: -2; }
+  #galerie img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 1.4s ease-in-out;
+  }
+  #galerie img.sichtbar { opacity: 1; }
+  .galerie-label {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 2;
+    background: rgba(255, 253, 249, 0.92);
+    color: var(--text);
+    font-size: 0.75rem;
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .galerie-label strong { color: var(--meer); }
+  .galerie-bildnachweis {
+    position: absolute;
+    right: 10px;
+    bottom: 8px;
+    z-index: 2;
+    max-width: calc(100% - 20px);
+    background: rgba(20, 20, 20, 0.6);
+    color: #fff;
+    font-size: 0.7rem;
+    padding: 3px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .galerie-bildnachweis:empty { display: none; }
+  /* Bei reduzierter Bewegung (Systemeinstellung) kein Überblenden; das Skript zeigt dann nur ein
+     Standbild und startet keinen Bildwechsel (siehe starteGalerie). */
+  @media (prefers-reduced-motion: reduce) {
+    #galerie img { transition: none; }
+  }
+
+  #chat {
+    background: var(--flaeche);
+    border: 1px solid var(--rand);
+    border-radius: 16px;
+    box-shadow: var(--schatten);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  #verlauf {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    /* Entscheidung des Product Owners: der Chat soll in der Breite IMMER passen, nur nach oben/unten scrollen ist
+       gewünscht. Ohne dieses explizite "overflow-x" macht die CSS-Spezifikation aus dem alleinigen
+       "overflow-y: auto" automatisch AUCH "overflow-x: auto" (Quirk: sobald eine Achse einen Wert
+       ungleich "visible" bekommt, wird die andere von "visible" auf "auto" hochgestuft) – das war
+       die eigentliche Ursache des beobachteten horizontalen Scrollbalkens, nicht zu breiter Inhalt
+       allein.
+       WICHTIG: Vertikal darf trotzdem NICHT auch abgeschnitten werden – deshalb kein "overflow:
+       hidden" hier, sondern gezielt nur die X-Achse. */
+    overflow-x: hidden;
+  }
+
+  /* Ab 980px Breite während des Gesprächs: Chat als Hauptelement mit ca. 60 % der Breite und fast
+     voller Fensterhöhe, rechts daneben die Galerie als Spalte (Vorbild Airbnb: viel Weißraum,
+     großflächige Fotos). */
+  @media (min-width: 980px) {
+    main {
+      padding: 20px 32px 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-areas: "kopf kopf" "chat galerie";
+      column-gap: 28px;
+      row-gap: 16px;
+    }
+    main > header { grid-area: kopf; }
+    main > #chat { grid-area: chat; }
+    main > #galerie { grid-area: galerie; border-radius: 20px; }
+    .galerie-label { top: 16px; left: 16px; font-size: 0.85rem; padding: 6px 12px; }
+    .galerie-bildnachweis { right: 14px; bottom: 12px; font-size: 0.75rem; }
+  }
+
+  /* Nach Abschluss der Planung (Klasse "abgeschlossen", gesetzt in zeigeErgebnis): die Galerie
+     verschwindet, der Reiseplan wird zum einzigen Inhalt der Seite und die Seite scrollt normal.
+     Der Chat wird zu einem überlagernden Panel, das standardmäßig eingeklappt ist und über den
+     schwebenden Knopf "Chat" geöffnet wird. Es liegt über dem Plan und verschiebt ihn nicht; der
+     Verlauf bleibt vollständig erhalten. */
+  main.abgeschlossen {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    max-width: 1080px;
+    padding: 24px 16px 96px;
+    gap: 20px;
+  }
+  main.abgeschlossen > #galerie { display: none; }
+  main.abgeschlossen > #chat {
+    display: none;
+    position: fixed;
+    z-index: 20;
+    right: 16px;
+    bottom: 84px;
+    width: min(440px, calc(100vw - 32px));
+    height: min(72vh, 680px);
+    box-shadow: var(--schatten-hover);
+  }
+  main.abgeschlossen > #chat.offen { display: flex; }
+  #chat-umschalter {
+    position: fixed;
+    z-index: 21;
+    right: 16px;
+    bottom: 20px;
+    border-radius: 999px;
+    padding: 12px 22px;
+    font-weight: 600;
+    box-shadow: var(--schatten-hover);
+  }
+  #chat-umschalter[hidden] { display: none; }
+  @media (min-width: 980px) {
+    main.abgeschlossen { padding: 32px 48px 96px; }
+    main.abgeschlossen > #chat { right: 32px; }
+    #chat-umschalter { right: 32px; bottom: 24px; }
+  }
+
+  .nachricht {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 16px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    font-size: 0.97rem;
+    /* Ohne dies würde ein einzelnes langes Wort/eine lange URL in einer Bot-Antwort die Sprechblase
+       (und damit den ganzen Chat) in die Breite drücken statt zu umbrechen. */
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+  .nachricht.bot {
+    background: var(--bot-blase);
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+  }
+  /* Iteration 2 (Formatierung im Bot-Text, siehe formatiereBotText): kompakte Aufzählung innerhalb
+     der Sprechblase; kleiner Außenabstand ersetzt die bewusst entfernten Leerzeilen um die Liste. */
+  .nachricht.bot ul {
+    margin: 4px 0;
+    padding-left: 1.3em;
+  }
+  .nachricht.bot a { color: inherit; text-decoration: underline; }
+  .nachricht.nutzer {
+    background: var(--nutzer-blase);
+    color: #fff;
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+  }
+  .nachricht.system {
+    align-self: center;
+    color: var(--text-schwach);
+    font-size: 0.85rem;
+    font-style: italic;
+  }
+  /* Iteration 2, Punkt 5 (Bot-Avatar): Avatar links neben jeder Bot-Sprechblase –
+     bewusst kein Name/Charakter, nur ein wiedererkennbares visuelles Signal. */
+  .nachricht-zeile {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    max-width: 85%;
+    align-self: flex-start;
+    /* Ohne dies schrumpfen Flex-Kinder standardmäßig nie unter ihre eigene Inhaltsbreite ("min-width:
+       auto") – in schmalen Containern reichte "max-width" allein nicht immer. */
+    min-width: 0;
+  }
+  .nachricht-zeile .nachricht.bot {
+    align-self: auto;
+    max-width: 100%;
+    flex: 1;
+    min-width: 0;
+  }
+  /* Entscheidung des Product Owners: ein eigener, kleiner Bot-Charakter mit Kopf+Oberkörper (Original-SVG,
+     static/img/avatar.svg) statt eines Emojis – bringt seine Form/Farbe schon selbst mit, deshalb
+     hier keine eigene Kreis-/Hintergrundfarbe mehr wie beim vorherigen Emoji-Avatar. */
+  .avatar {
+    flex-shrink: 0;
+    width: 30px;
+    height: 36px;
+    display: block;
+  }
+  /* Iteration 2, Punkt 4 (Ladeindikator): allgemeine "Bot schreibt"-Animation für die normale
+     Wartezeit nach dem Senden, verschwindet sobald irgendeine Antwort ankommt. */
+  .nachricht.tippt {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: 12px 14px;
+  }
+  .nachricht.tippt span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-schwach);
+    animation: tippt-punkt 1.2s infinite ease-in-out;
+  }
+  .nachricht.tippt span:nth-child(2) { animation-delay: 0.2s; }
+  .nachricht.tippt span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes tippt-punkt {
+    0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+    40% { opacity: 1; transform: translateY(-3px); }
+  }
+  /* Iteration 2, Punkt 3 (Schnellantworten): vom LLM optional vorgeschlagene Klick-Chips unter der
+     jeweiligen Bot-Nachricht – reine Eingabehilfe, das Textfeld bleibt daneben immer nutzbar. */
+  .schnellantworten {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-self: flex-start;
+    max-width: 85%;
+    margin-left: 38px;
+  }
+  .schnellantwort-chip {
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--akzent);
+    background: var(--akzent-hell);
+    color: var(--akzent);
+    font-size: 0.85rem;
+  }
+  .schnellantwort-chip:hover { background: var(--akzent); color: #fff; }
+  /* Iteration 2, Korrektur (siehe doku/29_.../README.md): eigene Sprechblase für den
+     Planungs-Status-Sonderfall im Chat selbst, statt den (bis dahin unsichtbaren) Reiseplan-
+     Bereich vorzeitig zu zeigen. */
+  .nachricht.planungs-status { font-style: italic; }
+  .hotel-karte-wrapper {
+    padding: 0;
+    background: transparent;
+    /* Flexibel bis maximal 260px, schrumpft in schmalen Containern mit, damit die Karte kein
+       horizontales Scrollen erzwingt. */
+    width: 100%;
+    max-width: 260px;
+  }
+  .hotel-karte-wrapper .karte { border-radius: 16px; border-bottom-left-radius: 4px; }
+  .hotel-karte-wrapper .karte img,
+  .hotel-karte-wrapper .karte .karte-ohne-foto { height: 140px; }
+  form#eingabeform {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid var(--rand);
+    background: var(--flaeche);
+    flex-shrink: 0;
+  }
+  /* Entscheidung des Product Owners: nach Abschluss der Planung komplett ausgeblendet statt nur ausgegraut (siehe
+     Nachrichten-Listener unten, form.hidden = true) – ohne diese Regel würde die obige
+     "display: flex"-Deklaration das native hidden-Verhalten überschreiben. */
+  form#eingabeform[hidden] { display: none; }
+  #eingabe {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--rand);
+    border-radius: 10px;
+    font-size: 0.97rem;
+    background: #fff;
+  }
+  button {
+    padding: 10px 18px;
+    border: none;
+    border-radius: 10px;
+    background: var(--akzent);
+    color: #fff;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #mikrofon, #vorlesen {
+    background: var(--bot-blase);
+    color: var(--text);
+    padding: 10px 14px;
+    flex-shrink: 0;
+  }
+  #mikrofon.aktiv { background: #d64545; color: #fff; }
+  #vorlesen.aktiv { background: var(--akzent); color: #fff; }
+
+  /* ---------- Ergebnisansicht ---------- */
+  #ergebnis { display: none; flex-direction: column; gap: 22px; }
+  /* Titelbereich (Trend zu großflächigen, immersiven Bildern): Titelbild aus bereits geladenen
+     Fotos des Plans (Unterkunft, sonst erster eingeplanter Ort, siehe reiseplan.py
+     `_titelbild_url`); ohne Foto ein Farbverlauf aus Meer- und Grünton. Der dunkle Verlauf am
+     unteren Rand sichert den Kontrast der weißen Schrift auch auf hellen Fotos. */
+  .titelbereich {
+    position: relative;
+    min-height: 240px;
+    border-radius: 24px;
+    overflow: hidden;
+    display: flex;
+    align-items: flex-end;
+    background: linear-gradient(135deg, var(--meer) 0%, var(--akzent) 100%);
+    box-shadow: var(--schatten);
+  }
+  .titelbereich img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .titelbereich::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0) 35%, rgba(0, 0, 0, 0.62) 100%);
+  }
+  .titelbereich h2 {
+    position: relative;
+    z-index: 1;
+    margin: 0;
+    padding: 24px 28px;
+    color: #fff;
+    font-family: var(--schrift-titel);
+    font-size: clamp(1.6rem, 4vw, 2.4rem);
+    font-weight: 600;
+    line-height: 1.2;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    overflow-wrap: break-word;
+    min-width: 0;
+  }
+  @media (min-width: 980px) {
+    .titelbereich { min-height: 320px; }
+  }
+  /* Eckdaten-Chips (Vorbild Booking.com: die wichtigsten Fakten direkt am Entscheidungspunkt). */
+  .eckdaten {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: -6px;
+  }
+  .eckdaten:empty { display: none; }
+  .eckdaten-chip {
+    background: var(--flaeche);
+    border: 1px solid var(--rand);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 0.88rem;
+    color: var(--text);
+  }
+  .eckdaten-chip.co2 { background: var(--akzent-hell); border-color: var(--akzent); color: var(--akzent); }
+  .nudge {
+    background: var(--akzent-hell);
+    border: 1px solid var(--akzent);
+    border-radius: 14px;
+    padding: 12px 16px;
+    font-size: 0.92rem;
+    white-space: pre-wrap;
+  }
+  .abschnitt-titel {
+    font-family: var(--schrift-titel);
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: var(--meer);
+    margin: 6px 0 10px;
+  }
+  .kartenreihe {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+    gap: 16px;
+  }
+  /* Karten (Vorbild Airbnb: große Fotos, abgerundete Ecken, weiche Schatten, dezente Hover-Reaktion). */
+  .karte {
+    background: var(--flaeche);
+    border: 1px solid var(--rand);
+    border-radius: 18px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--schatten);
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+  .karte:hover { box-shadow: var(--schatten-hover); transform: translateY(-2px); }
+  @media (prefers-reduced-motion: reduce) {
+    .karte { transition: none; }
+    .karte:hover { transform: none; }
+  }
+  .karte img,
+  .karte .karte-ohne-foto {
+    width: 100%;
+    height: 180px;
+    object-fit: cover;
+    display: block;
+    background: var(--bot-blase);
+  }
+  .karte .karte-ohne-foto {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-schwach);
+    font-size: 0.8rem;
+    background: linear-gradient(135deg, var(--meer-hell) 0%, var(--bot-blase) 100%);
+  }
+  .karte .karte-inhalt {
+    padding: 12px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .karte .karte-inhalt strong { font-size: 1rem; }
+  .karte .karte-inhalt span { font-size: 0.84rem; color: var(--text-schwach); }
+  .karte .karte-inhalt a { font-size: 0.84rem; color: var(--akzent); text-decoration: none; }
+  .karte .karte-inhalt a:hover { text-decoration: underline; }
+  .karte.vorschlag { border-style: dashed; border-color: var(--akzent); box-shadow: none; }
+  .vorschlag-badge {
+    align-self: flex-start;
+    background: var(--akzent-hell);
+    color: var(--akzent);
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .vorschlaege-rahmen {
+    border: 1px dashed var(--sand-dunkel);
+    border-radius: 16px;
+    padding: 12px;
+    margin-top: 12px;
+    background: rgba(255, 253, 249, 0.6);
+  }
+  .vorschlaege-titel {
+    font-size: 0.8rem;
+    color: var(--text-schwach);
+    margin-bottom: 10px;
+  }
+  /* Tage als vertikale Zeitleiste (Vorbild Wanderlog: Programm nach Tagen gruppiert). Die Linie
+     links verbindet die Tage, ein Punkt markiert jeden Tagesbeginn. */
+  .zeitleiste {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 0 36px;
+    position: relative;
+  }
+  .zeitleiste::before {
+    content: "";
+    position: absolute;
+    left: 11px;
+    top: 10px;
+    bottom: 10px;
+    width: 2px;
+    background: var(--rand);
+  }
+  .zeitleiste-tag { position: relative; padding-bottom: 26px; min-width: 0; }
+  .zeitleiste-tag:last-child { padding-bottom: 0; }
+  .zeitleiste-tag::before {
+    content: "";
+    position: absolute;
+    left: -34px;
+    top: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--meer);
+    border: 3px solid var(--bg);
+    box-shadow: 0 0 0 2px var(--meer);
+  }
+  .zeitleiste-titel {
+    font-family: var(--schrift-titel);
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+  .zeitleiste-tag p { color: var(--text-schwach); font-size: 0.9rem; margin: 0; }
+  details#volltext {
+    background: var(--flaeche);
+    border: 1px solid var(--rand);
+    border-radius: 14px;
+    padding: 12px 16px;
+  }
+  details#volltext pre { white-space: pre-wrap; font-family: inherit; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<main id="app">
+  <header>
+    <h1>Reisebot</h1>
+    <p>Reiseplanungs-Prototyp (Masterarbeit) – erzähl mir, was dir für eine Reise vorschwebt.</p>
+  </header>
+
+  <section id="chat" aria-label="Gespräch mit dem Reisebot">
+    <div id="verlauf"></div>
+    <form id="eingabeform">
+      <input id="eingabe" type="text" autocomplete="off" placeholder="Antwort eingeben oder sprechen ..." />
+      <button type="button" id="mikrofon" title="Sprechen (Mikrofon des Geräts)">🎤</button>
+      <button type="button" id="vorlesen" title="Antworten des Bots vorlesen (Lautsprecher des Geräts)">🔊</button>
+      <button type="submit" id="senden">Senden</button>
+    </form>
+  </section>
+
+  <aside id="galerie" aria-label="Inspiration: Stimmungsbilder, kein Reisevorschlag">
+    <img id="galerie-bild-a" alt="" aria-hidden="true">
+    <img id="galerie-bild-b" alt="" aria-hidden="true">
+    <span class="galerie-label"><strong>Inspiration</strong> · Stimmungsbilder, kein Reisevorschlag</span>
+    <span class="galerie-bildnachweis" id="galerie-bildnachweis"></span>
+  </aside>
+
+  <section id="ergebnis">
+    <div class="titelbereich" id="titelbereich">
+      <h2 id="reise-titel">Deine Reise</h2>
+    </div>
+    <div id="eckdaten" class="eckdaten" aria-label="Eckdaten der Reise"></div>
+    <div id="nudge" class="nudge" style="display:none"></div>
+    <div id="hinreise-bereich"></div>
+    <div id="unterkunft-bereich"></div>
+    <div id="verleih-bereich"></div>
+    <div id="tage-bereich"></div>
+    <div id="weitere-bereich"></div>
+    <div id="rueckreise-bereich"></div>
+    <details id="volltext">
+      <summary>Vollständiger Reiseplan als Text</summary>
+      <pre id="volltext-inhalt"></pre>
+    </details>
+  </section>
+</main>
+
+<button type="button" id="chat-umschalter" aria-controls="chat" aria-expanded="false" hidden>Chat</button>
+
+<script>
+const verlauf = document.getElementById("verlauf");
+const form = document.getElementById("eingabeform");
+const eingabe = document.getElementById("eingabe");
+const sendenKnopf = document.getElementById("senden");
+const mikrofonKnopf = document.getElementById("mikrofon");
+const vorlesenKnopf = document.getElementById("vorlesen");
+
+// Iteration 2, Punkt 5 (Bot-Avatar): schlichtes rundes Icon links neben jeder Bot-Sprechblase,
+// siehe doku/28_stage28_iteration2_ux_feedback_konzepte/README.md.
+function erzeugeAvatar() {
+  // Entscheidung des Product Owners (Beispielbild als Stilvorlage): statt eines Emojis ein eigener, kleiner
+  // Bot-Charakter mit Kopf UND angedeutetem Oberkörper – komplett neu gezeichnet
+  // (static/img/avatar.svg), damit kein fremdes Bild kopiert wird, nur die Grundidee
+  // (freundliches, rundes Bot-Gesicht) aufgegriffen.
+  const avatar = document.createElement("img");
+  avatar.className = "avatar";
+  avatar.src = "/static/img/avatar.svg";
+  avatar.alt = "";
+  avatar.setAttribute("aria-hidden", "true");
+  return avatar;
+}
+
+// BOT-TEXT-FORMATIERUNG ANFANG
+// Iteration 2 (Betreuer-Feedback: Formatierung im Bot-Text): das Regelwerk erlaubt dem LLM genau
+// zwei Auszeichnungen, **fett** und "- "-Aufzählungen (regelwerk.py, Absatz "FORMATIERUNG"). Statt
+// einer Markdown-Bibliothek wandelt diese kleine Funktion nur diese Fälle plus einfache http/https-
+// Links um. Sicherheitsprinzip: ZUERST wird der gesamte Text HTML-escaped, erst danach werden gezielt
+// eigene Tags eingefügt. Vom LLM gelieferte Tags (<script>, <img onerror=...>) erscheinen dadurch
+// immer als reiner Text. Zusätzlich werden Anführungszeichen escaped, damit eine Link-Adresse nicht
+// aus dem href-Attribut ausbrechen kann (escapeHtml allein escaped nur &, < und >).
+const FETT_MUSTER = /\*\*(?=\S)([^\n]*?\S)\*\*/g;
+// Nur http/https: "javascript:"- oder "data:"-Adressen passen nicht auf das Muster und bleiben Text.
+const LINK_MUSTER = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi;
+const AUFZAEHLUNG_MUSTER = /^\s*- (.*)$/;
+
+function formatiereBotText(text) {
+  const sicher = escapeHtml(text).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const zeilen = sicher.split("\n");
+  let html = "";
+  let inListe = false;
+  zeilen.forEach((zeile, index) => {
+    const treffer = zeile.match(AUFZAEHLUNG_MUSTER);
+    if (treffer) {
+      if (!inListe) {
+        // Zeilenumbrüche direkt vor der Liste entfallen: .nachricht nutzt "white-space: pre-wrap",
+        // sonst entstünden sichtbare Leerzeilen zusätzlich zum Listenabstand.
+        html = html.replace(/\n+$/, "") + "<ul>";
+        inListe = true;
+      }
+      html += "<li>" + formatiereZeile(treffer[1]) + "</li>";
+      return;
+    }
+    if (inListe) {
+      html += "</ul>";
+      inListe = false;
+      // Leerzeilen direkt nach der Liste entfallen aus demselben Grund.
+      if (zeile.trim() === "") return;
+    } else if (index > 0 && !html.endsWith("</ul>")) {
+      html += "\n";
+    }
+    html += formatiereZeile(zeile);
+  });
+  if (inListe) html += "</ul>";
+  return html;
+}
+
+function formatiereZeile(zeile) {
+  return zeile
+    .replace(LINK_MUSTER, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(FETT_MUSTER, "<strong>$1</strong>");
+}
+
+// Fürs Vorlesen: dieselben Auszeichnungen ohne Sonderzeichen; bei Links nur der Linktext, eine
+// vorgelesene Adresse wäre unverständlich.
+function botTextAlsKlartext(text) {
+  return text
+    .replace(LINK_MUSTER, "$1")
+    .replace(FETT_MUSTER, "$1")
+    .split("\n")
+    .map((zeile) => zeile.replace(AUFZAEHLUNG_MUSTER, "$1"))
+    .join("\n");
+}
+// BOT-TEXT-FORMATIERUNG ENDE
+
+function anhaengen(text, klasse) {
+  const el = document.createElement("div");
+  el.className = "nachricht " + klasse;
+  // Nur Bot-Nachrichten werden formatiert; Nutzer-, System- und Statusnachrichten bleiben reiner
+  // Text (textContent), da dort keine Auszeichnungen vorgesehen sind.
+  if (klasse === "bot") {
+    el.innerHTML = formatiereBotText(text);
+  } else {
+    el.textContent = text;
+  }
+  if (klasse === "bot") {
+    const zeile = document.createElement("div");
+    zeile.className = "nachricht-zeile";
+    zeile.appendChild(erzeugeAvatar());
+    zeile.appendChild(el);
+    verlauf.appendChild(zeile);
+  } else {
+    verlauf.appendChild(el);
+  }
+  verlauf.scrollTop = verlauf.scrollHeight;
+  return el;
+}
+
+// Iteration 2, Punkt 4 (Ladeindikator, allgemeiner Fall): kurze "Bot schreibt"-Animation direkt
+// nach dem Senden, verschwindet sobald irgendeine Serverantwort ankommt (siehe Nachrichten-Listener
+// unten). Reine Frontend-Anzeige, kein Server-Signal nötig für diesen allgemeinen Fall.
+function zeigeTippt() {
+  entferneTippt();
+  const bubble = document.createElement("div");
+  bubble.className = "nachricht bot tippt";
+  bubble.innerHTML = "<span></span><span></span><span></span>";
+  const zeile = document.createElement("div");
+  zeile.id = "tippt-anzeige";
+  zeile.className = "nachricht-zeile";
+  zeile.appendChild(erzeugeAvatar());
+  zeile.appendChild(bubble);
+  verlauf.appendChild(zeile);
+  verlauf.scrollTop = verlauf.scrollHeight;
+}
+
+function entferneTippt() {
+  const el = document.getElementById("tippt-anzeige");
+  if (el) el.remove();
+}
+
+// Iteration 2, Punkt 3 (Schnellantworten): vom LLM optional vorgeschlagene Klick-Chips unter der
+// jeweils letzten Bot-Nachricht. Reine Eingabehilfe – das Textfeld bleibt daneben IMMER nutzbar,
+// ein Klick sendet die Option genauso wie eine getippte Antwort. Alte Chips verschwinden, sobald
+// irgendeine neue Nachricht abgeschickt wird (siehe sendeNachricht), damit nie veraltete Optionen
+// anklickbar herumstehen.
+let aktuelleSchnellantwortenZeile = null;
+
+function zeigeSchnellantworten(optionen) {
+  entferneSchnellantworten();
+  const zeile = document.createElement("div");
+  zeile.className = "schnellantworten";
+  optionen.forEach((option) => {
+    const knopf = document.createElement("button");
+    knopf.type = "button";
+    knopf.className = "schnellantwort-chip";
+    knopf.textContent = option;
+    knopf.addEventListener("click", () => sendeNachricht(option));
+    zeile.appendChild(knopf);
+  });
+  verlauf.appendChild(zeile);
+  verlauf.scrollTop = verlauf.scrollHeight;
+  aktuelleSchnellantwortenZeile = zeile;
+}
+
+function entferneSchnellantworten() {
+  if (aktuelleSchnellantwortenZeile) {
+    aktuelleSchnellantwortenZeile.remove();
+    aktuelleSchnellantwortenZeile = null;
+  }
+}
+
+// Iteration 2, Gesamtdesign: Galerie "Inspiration" während des Gesprächs. Lokale, lizenzfreie
+// Stimmungsbilder (Herkunft: static/img/galerie/QUELLEN.md), die etwa alle 7 Sekunden weich
+// ineinander überblenden. Zwei übereinanderliegende <img>-Ebenen wechseln sich ab: das nächste Bild
+// wird in die verdeckte Ebene geladen und erst nach vollständigem Laden eingeblendet, damit kein
+// halb geladenes Bild erscheint. Es gibt keine externe Bildanfrage zur Laufzeit.
+// Die Liste muss mit den Dateien im Ordner übereinstimmen (geprüft in tests/test_galerie.py).
+const GALERIE_BILDER = [
+  { datei: "alpensee_toblino.jpg", fotograf: "Marc St" },
+  { datei: "kueste_manarola.jpg", fotograf: "Justin Owens" },
+  { datei: "lavendelfeld.jpg", fotograf: "Nikolay Hristov" },
+  { datei: "bahn_alpen_schweiz.jpg", fotograf: "Patrick Robert Doyle" },
+  { datei: "see_luzern.jpg", fotograf: "Karsten Winegeart" },
+  { datei: "weinberge_toskana.jpg", fotograf: "Johny Goerend" },
+  { datei: "see_bled.jpg", fotograf: "QQ Z" },
+  { datei: "bahn_viadukt_filisur.jpg", fotograf: "Robin Ulrich" },
+  { datei: "fjord_norwegen.jpg", fotograf: "Marek Piwnicki" },
+  { datei: "kuppel_santorini.jpg", fotograf: "Xuan Nguyen" },
+];
+const GALERIE_INTERVALL_MS = 7000;
+const galerieEbenen = [document.getElementById("galerie-bild-a"), document.getElementById("galerie-bild-b")];
+const galerieBildnachweis = document.getElementById("galerie-bildnachweis");
+let galerieIndex = 0;
+let galerieSichtbareEbene = 0;
+let galerieTimer = null;
+
+function galerieBildUrl(eintrag) {
+  return "/static/img/galerie/" + eintrag.datei;
+}
+
+function zeigeGalerieBild(index) {
+  const eintrag = GALERIE_BILDER[index];
+  const naechsteEbene = 1 - galerieSichtbareEbene;
+  const bild = galerieEbenen[naechsteEbene];
+  bild.onload = () => {
+    bild.classList.add("sichtbar");
+    galerieEbenen[galerieSichtbareEbene].classList.remove("sichtbar");
+    galerieSichtbareEbene = naechsteEbene;
+    // Namensnennung ist nach der Unsplash License nicht verpflichtend, wird aber als übliche Praxis
+    // direkt am Bild angezeigt.
+    galerieBildnachweis.textContent = "Foto: " + eintrag.fotograf + " / Unsplash";
+  };
+  bild.src = galerieBildUrl(eintrag);
+}
+
+function starteGalerie() {
+  // Zufälliger Startpunkt, damit nicht jede Sitzung mit demselben Motiv beginnt.
+  galerieIndex = Math.floor(Math.random() * GALERIE_BILDER.length);
+  zeigeGalerieBild(galerieIndex);
+  // Bei reduzierter Bewegung (Systemeinstellung) bleibt es bei einem Standbild.
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  galerieTimer = setInterval(() => {
+    galerieIndex = (galerieIndex + 1) % GALERIE_BILDER.length;
+    zeigeGalerieBild(galerieIndex);
+  }, GALERIE_INTERVALL_MS);
+}
+
+// Nach Abschluss der Planung wird die Galerie ausgeblendet (CSS, main.abgeschlossen); der
+// Bildwechsel wird zusätzlich angehalten, damit im Hintergrund keine Bilder mehr geladen werden.
+function stoppeGalerie() {
+  if (galerieTimer) clearInterval(galerieTimer);
+  galerieTimer = null;
+}
+
+starteGalerie();
+
+// Iteration 2, Gesamtdesign: Nach Abschluss ist der Chat standardmäßig eingeklappt (Betreuer-
+// Feedback: Chat bei Bedarf ausblendbar). Der schwebende Knopf öffnet und schließt ihn als
+// überlagerndes Panel; der Verlauf bleibt dabei vollständig erhalten.
+const chatBereich = document.getElementById("chat");
+const chatUmschalter = document.getElementById("chat-umschalter");
+
+function setzeChatOffen(offen) {
+  chatBereich.classList.toggle("offen", offen);
+  chatUmschalter.setAttribute("aria-expanded", String(offen));
+  chatUmschalter.textContent = offen ? "Chat schließen" : "Chat";
+  if (offen) verlauf.scrollTop = verlauf.scrollHeight;
+}
+
+chatUmschalter.addEventListener("click", () => {
+  setzeChatOffen(!chatBereich.classList.contains("offen"));
+});
+
+document.addEventListener("keydown", (ereignis) => {
+  if (ereignis.key === "Escape" && chatBereich.classList.contains("offen")) setzeChatOffen(false);
+});
+
+const protokoll = location.protocol === "https:" ? "wss:" : "ws:";
+const socket = new WebSocket(protokoll + "//" + location.host + "/ws/chat");
+
+socket.addEventListener("open", () => {
+  anhaengen("Verbunden – warte auf die erste Frage ...", "system");
+});
+
+socket.addEventListener("close", () => {
+  eingabe.disabled = true;
+  sendenKnopf.disabled = true;
+  mikrofonKnopf.disabled = true;
+});
+
+socket.addEventListener("error", () => {
+  anhaengen("Verbindungsfehler.", "system");
+});
+
+socket.addEventListener("message", (ereignis) => {
+  // Egal welche Art von Nachricht ankommt – die "Bot schreibt"-Animation hat ihren Zweck erfüllt.
+  entferneTippt();
+  const daten = JSON.parse(ereignis.data);
+  if (daten.typ === "bot") {
+    anhaengen(daten.text, "bot");
+    liesVor(daten.text);
+    if (daten.schnellantworten && daten.schnellantworten.length) {
+      zeigeSchnellantworten(daten.schnellantworten);
+    }
+  } else if (daten.typ === "hotel_karte") {
+    zeigeHotelKarteImVerlauf(daten);
+  } else if (daten.typ === "status") {
+    zeigePlanungsStatus(daten.phase);
+  } else if (daten.typ === "ergebnis") {
+    zeigeErgebnis(daten);
+    // Entscheidung des Product Owners: die Planung ist an dieser Stelle endgültig abgeschlossen, eine weitere Eingabe
+    // ist technisch gar nicht mehr möglich (siehe chat.py::hauptablauf – die Sitzung endet mit dem
+    // Abschluss). Statt die Eingabezeile nur ausgegraut stehen zu lassen, blendet sie komplett aus
+    // – im einklappbaren Chat-Panel bleibt dann nur der Gesprächsverlauf zum Nachlesen übrig.
+    form.hidden = true;
+  }
+});
+
+// Iteration 2, Punkt 4 (Ladeindikator, Sonderfall): eigenes, deutlicheres Signal für den einen
+// bekannten Fall, in dem die finale Planung wirklich lange dauern kann (Barrierefreiheits-
+// Einzelprüfung je Kandidat, siehe ENTSCHEIDUNGSLOG.md Phase 44). Korrektur nach echtem
+// Browser-Test (siehe doku/29_stage29_layout_chat_bis_abschluss_zentriert/README.md): erscheint
+// als eigene Sprechblase IM CHAT (wie die Tipp-Animation, die sie ersetzt) statt den bis dahin
+// unsichtbaren Reiseplan-Bereich schon vorzeitig aufzudecken – der Nutzer soll vor Abschluss noch
+// gar nicht sehen, wo/wie der Reiseplan später erscheint.
+function zeigePlanungsStatus(phase) {
+  if (phase !== "plant_reise") return;
+  entferneTippt();
+  const bubble = document.createElement("div");
+  bubble.className = "nachricht bot planungs-status";
+  bubble.textContent = "Reiseroute wird berechnet – kann bei vielen Kandidaten etwas dauern ...";
+  const zeile = document.createElement("div");
+  zeile.className = "nachricht-zeile";
+  zeile.appendChild(erzeugeAvatar());
+  zeile.appendChild(bubble);
+  verlauf.appendChild(zeile);
+  verlauf.scrollTop = verlauf.scrollHeight;
+}
+
+function sendeNachricht(text) {
+  const bereinigt = text.trim();
+  if (!bereinigt) return;
+  entferneSchnellantworten();
+  anhaengen(bereinigt, "nutzer");
+  socket.send(JSON.stringify({ text: bereinigt }));
+  zeigeTippt();
+  eingabe.value = "";
+}
+
+form.addEventListener("submit", (ereignis) => {
+  ereignis.preventDefault();
+  sendeNachricht(eingabe.value);
+});
+
+// Mikrofon (Spracheingabe) + Vorlesefunktion (Sprachausgabe) – Standardmikrofon/-lautsprecher des
+// Nutzergeräts über die Web Speech API des Browsers, KEINE Serverbeteiligung (anders als
+// AUDIO_MODUS in chat.py, das auf ein Mikrofon/Lautsprecher am SERVER angewiesen wäre – nutzlos
+// für einen entfernten Browser-Client). Der Chat läuft danach unverändert genauso weiter, eine
+// erkannte Äußerung wird wie eine getippte Nachricht verschickt.
+const SpracherkennungKlasse = window.SpeechRecognition || window.webkitSpeechRecognition;
+let vorlesenAktiv = false;
+
+function aktualisiereVorlesenKnopf() {
+  vorlesenKnopf.classList.toggle("aktiv", vorlesenAktiv);
+}
+
+vorlesenKnopf.addEventListener("click", () => {
+  vorlesenAktiv = !vorlesenAktiv;
+  aktualisiereVorlesenKnopf();
+  if (!vorlesenAktiv && "speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+});
+
+// Deutsche Stimmen des Browsers/Betriebssystems für die Vorlesefunktion – `getVoices()` liefert
+// beim allerersten Aufruf oft noch eine leere Liste (Stimmen werden asynchron nachgeladen), daher
+// zusätzlich auf das "voiceschanged"-Ereignis hören und die Liste dann aktualisieren.
+let deutscheStimmen = [];
+
+function aktualisiereStimmenListe() {
+  deutscheStimmen = window.speechSynthesis.getVoices().filter((stimme) => stimme.lang?.toLowerCase().startsWith("de"));
+}
+
+if ("speechSynthesis" in window) {
+  aktualisiereStimmenListe();
+  window.speechSynthesis.onvoiceschanged = aktualisiereStimmenListe;
+}
+
+function waehleNatuerlicheStimme() {
+  if (!deutscheStimmen.length) return null;
+  // Netzwerk-/Cloud-Stimmen (z.B. "Google Deutsch") klingen deutlich natürlicher als die
+  // vorinstallierten lokalen System-Stimmen ("Microsoft Hedda" u.ä.) – wo verfügbar, bevorzugen.
+  return (
+    deutscheStimmen.find((stimme) => /google/i.test(stimme.name))
+    || deutscheStimmen.find((stimme) => !stimme.localService)
+    || deutscheStimmen[0]
+  );
+}
+
+function liesVor(text) {
+  if (!vorlesenAktiv || !("speechSynthesis" in window)) return;
+  // Ohne Sternchen/Linkadressen vorlesen (siehe botTextAlsKlartext).
+  const aeusserung = new SpeechSynthesisUtterance(botTextAlsKlartext(text));
+  aeusserung.lang = "de-DE";
+  const stimme = waehleNatuerlicheStimme();
+  if (stimme) aeusserung.voice = stimme;
+  window.speechSynthesis.speak(aeusserung);
+}
+
+if (!SpracherkennungKlasse) {
+  // z.B. Firefox ohne Spracherkennungs-Unterstützung – Chat bleibt per Text/Vorlesen nutzbar.
+  mikrofonKnopf.disabled = true;
+  mikrofonKnopf.title = "Spracheingabe wird von diesem Browser nicht unterstützt (z.B. Firefox) – bitte Chrome/Edge/Safari verwenden oder weiter tippen.";
+} else {
+  const erkennung = new SpracherkennungKlasse();
+  erkennung.lang = "de-DE";
+  erkennung.continuous = false;
+  erkennung.interimResults = false;
+  let zuhoertGerade = false;
+
+  // BEHOBENER BUG: der Knopf wurde bisher SOFORT beim Klick rot markiert (optimistisch, noch bevor
+  // die Erkennung tatsächlich lief) und jeder weitere Klick rief erneut `start()` auf, obwohl eine
+  // Erkennung bereits lief – das wirft in allen Browsern einen synchronen `InvalidStateError`, den
+  // niemand sah, und `error`/`end` räumten den roten Zustand kommentarlos wieder ab ("leuchtet rot,
+  // hört sofort wieder auf, funktioniert nicht"). Jetzt: rot erst NACH dem echten "start"-Ereignis,
+  // ein zweiter Klick während des Zuhörens beendet die laufende Erkennung sauber (`stop()`) statt
+  // sie neu zu starten, und jeder Fehler bekommt eine sichtbare, erklärende Meldung im Chat.
+  erkennung.addEventListener("start", () => {
+    zuhoertGerade = true;
+    mikrofonKnopf.classList.add("aktiv");
+  });
+  erkennung.addEventListener("result", (ereignis) => {
+    const text = ereignis.results[0][0].transcript;
+    sendeNachricht(text);
+    // Erste Spracheingabe schaltet automatisch auch die Vorlesefunktion ein – wer mit dem Bot
+    // spricht, möchte vermutlich auch gesprochene Antworten hören (jederzeit wieder abschaltbar).
+    if (!vorlesenAktiv) {
+      vorlesenAktiv = true;
+      aktualisiereVorlesenKnopf();
+    }
+  });
+  erkennung.addEventListener("end", () => {
+    zuhoertGerade = false;
+    mikrofonKnopf.classList.remove("aktiv");
+  });
+  erkennung.addEventListener("error", (ereignis) => {
+    zuhoertGerade = false;
+    mikrofonKnopf.classList.remove("aktiv");
+    const meldung = mikrofonFehlermeldung(ereignis.error);
+    if (meldung) anhaengen(meldung, "system");
+  });
+
+  mikrofonKnopf.addEventListener("click", () => {
+    if (zuhoertGerade) {
+      erkennung.stop();
+      return;
+    }
+    try {
+      erkennung.start();
+    } catch (fehler) {
+      anhaengen("Spracherkennung konnte nicht gestartet werden – bitte kurz warten und erneut klicken.", "system");
+    }
+  });
+}
+
+function mikrofonFehlermeldung(code) {
+  switch (code) {
+    case "not-allowed":
+    case "permission-denied":
+      return "Mikrofonzugriff wurde verweigert – bitte in den Browser-/Systemeinstellungen für diese Seite erlauben und erneut klicken.";
+    case "audio-capture":
+      return "Kein Mikrofon gefunden – ist eins angeschlossen und als Standardgerät ausgewählt?";
+    case "no-speech":
+      return "Es wurde nichts gehört – bitte nach dem Klick direkt sprechen.";
+    case "network":
+      return (
+        "Der Spracherkennungsdienst des Browsers ist nicht erreichbar – NICHT zwingend fehlende " +
+        "Internetverbindung, oft eher ein Chromium-Browser ohne Google-API-Schlüssel (z.B. Brave, " +
+        "Opera) oder ein Adblocker/eine Firewall, die den Dienst blockiert. Mit Google Chrome/Edge " +
+        "prüfen, oder einfach normal tippen bzw. ein externes Diktier-Tool wie Whisper Flow " +
+        "verwenden, das direkt ins Textfeld schreibt."
+      );
+    case "aborted":
+      return null; // Nutzer hat selbst per Klick abgebrochen, keine Fehlermeldung nötig
+    default:
+      return `Spracherkennung fehlgeschlagen (${code}).`;
+  }
+}
+
+function karteHtml(karte, kategorieText) {
+  const bild = karte.foto_url
+    ? `<img src="${karte.foto_url}" alt="${escapeHtml(karte.name)}">`
+    : `<div class="karte-ohne-foto">Kein Foto verfügbar</div>`;
+  const link = karte.maps_link
+    ? `<a href="${karte.maps_link}" target="_blank" rel="noopener">Auf Google Maps ansehen</a>`
+    : "";
+  const routenLink = karte.routen_link
+    ? `<a href="${karte.routen_link}" target="_blank" rel="noopener">Route ansehen</a>`
+    : "";
+  const badge = karte.label ? `<span class="vorschlag-badge">${escapeHtml(karte.label)}</span>` : "";
+  const text = kategorieText || karte.beschreibung || "";
+  return `<div class="karte${karte.label ? " vorschlag" : ""}">
+    ${bild}
+    <div class="karte-inhalt">
+      ${badge}
+      <strong>${escapeHtml(karte.name)}</strong>
+      ${text ? `<span>${escapeHtml(text)}</span>` : ""}
+      ${link}
+      ${routenLink}
+    </div>
+  </div>`;
+}
+
+function zeigeHotelKarteImVerlauf(daten) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "nachricht bot hotel-karte-wrapper";
+  const preisText = daten.preis_pro_nacht_euro != null
+    ? `ca. ${Math.round(daten.preis_pro_nacht_euro)} € / Nacht (grobe Schätzung)`
+    : "";
+  wrapper.innerHTML = karteHtml(daten, preisText);
+  verlauf.appendChild(wrapper);
+  verlauf.scrollTop = verlauf.scrollHeight;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text ?? "";
+  return div.innerHTML;
+}
+
+// ECKDATEN-CHIPS ANFANG
+// Iteration 2, Gesamtdesign: Zahlen im deutschen Format (Dezimalkomma, Tausenderpunkt).
+function formatiereZahl(wert, nachkommastellen) {
+  return Number(wert).toLocaleString("de-DE", { maximumFractionDigits: nachkommastellen });
+}
+
+// Eckdaten-Chips unter dem Titel (Vorbild Booking.com: Kernfakten direkt am Entscheidungspunkt).
+// Alle Werte stammen aus `karten.eckdaten` (reiseplan.py `_eckdaten`); fehlt ein Wert, entfällt der
+// zugehörige Chip, statt einen Platzhalter oder eine Schätzung zu zeigen.
+function eckdatenChips(eckdaten) {
+  if (!eckdaten) return [];
+  const chips = [];
+  if (eckdaten.zeitraum) chips.push({ text: eckdaten.zeitraum });
+  if (eckdaten.tage) chips.push({ text: eckdaten.tage === 1 ? "1 Tag" : `${eckdaten.tage} Tage` });
+  const hin = eckdaten.verkehrsmittel_hinreise;
+  const rueck = eckdaten.verkehrsmittel_rueckreise;
+  if (hin && rueck && hin !== rueck) {
+    chips.push({ text: `Hin: ${hin} · Zurück: ${rueck}` });
+  } else if (hin || rueck) {
+    // Bei gleichem Verkehrsmittel für Hin- und Rückreise genügt eine Nennung.
+    chips.push({ text: hin || rueck });
+  }
+  if (eckdaten.co2_an_abreise_kg != null) {
+    // Die Bezeichnung nennt ausdrücklich nur An- und Abreise: für die Wege vor Ort liegt keine
+    // CO₂-Berechnung vor.
+    chips.push({ text: `CO₂ An-/Abreise: ${formatiereZahl(eckdaten.co2_an_abreise_kg, 1)} kg`, klasse: "co2" });
+  }
+  if (eckdaten.kosten_pro_person != null) {
+    const kosten = `ca. ${formatiereZahl(Math.round(eckdaten.kosten_pro_person), 0)} € p. P.`;
+    chips.push(eckdaten.kosten_unvollstaendig
+      ? { text: `${kosten} (ohne Unterkunft)`, titel: "Unvollständige Schätzung: für die Unterkunft lag kein Preisniveau vor." }
+      : { text: kosten, titel: "Grobe Schätzung pro Person, keine echten Einzelpreise." });
+  }
+  return chips;
+}
+
+// ECKDATEN-CHIPS ENDE
+
+// Überschrift eines Abschnitts im Reiseplan (Hinreise, Unterkunft, ...).
+function abschnittHtml(titel, inhalt) {
+  return `<div class="abschnitt-titel">${escapeHtml(titel)}</div>${inhalt}`;
+}
+
+function zeigeErgebnis(daten) {
+  // Erst mit dem fertigen Plan wechselt das Layout (siehe CSS main.abgeschlossen): die Galerie
+  // verschwindet, der Reiseplan füllt die Seite, der Chat wird zum eingeklappten Panel hinter dem
+  // schwebenden Knopf "Chat". Vorher ist vom Reiseplan-Bereich nichts zu sehen (siehe
+  // doku/29_stage29_layout_chat_bis_abschluss_zentriert/README.md).
+  document.getElementById("app").classList.add("abgeschlossen");
+  document.getElementById("ergebnis").style.display = "flex";
+  stoppeGalerie();
+  setzeChatOffen(false);
+  chatUmschalter.hidden = false;
+
+  const karten = daten.karten || {};
+  const eckdaten = karten.eckdaten || {};
+
+  // Titelbereich (Trend zu großflächigen, immersiven Bildern): ohne bekannten Zielort ein neutraler
+  // Titel, ohne Titelbild bleibt der Farbverlauf aus dem CSS sichtbar.
+  document.getElementById("reise-titel").textContent =
+    eckdaten.zielort ? `Deine Reise nach ${eckdaten.zielort}` : "Deine Reise";
+  if (karten.titelbild_url) {
+    const titelbild = document.createElement("img");
+    titelbild.src = karten.titelbild_url;
+    titelbild.alt = "";
+    titelbild.setAttribute("aria-hidden", "true");
+    // Lädt das Bild nicht, wird es entfernt, damit der Farbverlauf statt eines Fehlerbilds erscheint.
+    titelbild.onerror = () => titelbild.remove();
+    document.getElementById("titelbereich").prepend(titelbild);
+  }
+
+  const eckdatenBereich = document.getElementById("eckdaten");
+  eckdatenBereich.innerHTML = "";
+  eckdatenChips(eckdaten).forEach((chip) => {
+    const element = document.createElement("span");
+    element.className = "eckdaten-chip" + (chip.klasse ? " " + chip.klasse : "");
+    element.textContent = chip.text;
+    if (chip.titel) element.title = chip.titel;
+    eckdatenBereich.appendChild(element);
+  });
+
+  if (daten.nachhaltigkeits_nudge) {
+    const nudge = document.getElementById("nudge");
+    nudge.style.display = "block";
+    nudge.textContent = daten.nachhaltigkeits_nudge;
+  }
+
+  const hinreiseBereich = document.getElementById("hinreise-bereich");
+  if (karten.hinreise) {
+    hinreiseBereich.innerHTML =
+      abschnittHtml("Hinreise", `<div class="kartenreihe">${karteHtml(karten.hinreise, "")}</div>`);
+  }
+
+  const unterkunftBereich = document.getElementById("unterkunft-bereich");
+  if (karten.unterkunft) {
+    unterkunftBereich.innerHTML =
+      abschnittHtml("Unterkunft", `<div class="kartenreihe">${karteHtml(karten.unterkunft, "")}</div>`);
+  }
+
+  // Iteration 2, Stage 30 (Rückmeldung des Product Owners): lokaler Verleih (F14) als eigene Karte direkt unter der
+  // Unterkunft, nicht mehr nur als Textsatz im vollständigen Reiseplan weiter unten.
+  const verleihBereich = document.getElementById("verleih-bereich");
+  if (karten.verleih) {
+    verleihBereich.innerHTML =
+      abschnittHtml("Verleih vor Ort", `<div class="kartenreihe">${karteHtml(karten.verleih, karten.verleih.kategorie)}</div>`);
+  }
+
+  // Tage als vertikale Zeitleiste (Vorbild Wanderlog: Programm nach Tagen gruppiert). Die
+  // Vorschläge eines Tages stehen weiterhin im gestrichelten, beschrifteten Rahmen direkt nach den
+  // eingeplanten Orten desselben Tages.
+  const tageBereich = document.getElementById("tage-bereich");
+  const tage = karten.tage || [];
+  const tageHtml = tage.map((tag) => {
+    const titel = "Tag " + tag.tag + (tag.ankunftstag ? " (Ankunft)" : "");
+    const besuche_html = tag.besuche.map((b) => {
+      const anfahrt = b.verkehrsmittel ? `Anfahrt ${b.verkehrsmittel} · ` : "";
+      return karteHtml(b, `${anfahrt}${b.kategorie} · ${b.ankunft} – ${b.abfahrt}`);
+    }).join("");
+    const vorschlaege = tag.vorschlaege || [];
+    const poiTeil = besuche_html
+      ? `<div class="kartenreihe">${besuche_html}</div>`
+      : (vorschlaege.length ? "" : "<p>Kein Programm eingeplant.</p>");
+    let vorschlagTeil = "";
+    if (vorschlaege.length) {
+      const vorschlaege_html = vorschlaege.map((v) => karteHtml(v, v.kategorie)).join("");
+      vorschlagTeil = `<div class="vorschlaege-rahmen"><div class="vorschlaege-titel">Vorschläge – nicht eingeplant, nicht Teil der optimierten Route</div><div class="kartenreihe">${vorschlaege_html}</div></div>`;
+    }
+    return `<li class="zeitleiste-tag"><div class="zeitleiste-titel">${titel}</div>${poiTeil}${vorschlagTeil}</li>`;
+  }).join("");
+  tageBereich.innerHTML = tage.length
+    ? abschnittHtml("Tag für Tag", `<ol class="zeitleiste">${tageHtml}</ol>`)
+    : "";
+
+  const weitereBereich = document.getElementById("weitere-bereich");
+  if (karten.weitere_empfehlungen && karten.weitere_empfehlungen.length) {
+    const karten_html = karten.weitere_empfehlungen.map((p) => karteHtml(p, p.kategorie)).join("");
+    weitereBereich.innerHTML = abschnittHtml("Weitere Empfehlungen", `<div class="kartenreihe">${karten_html}</div>`);
+  }
+
+  const rueckreiseBereich = document.getElementById("rueckreise-bereich");
+  if (karten.rueckreise) {
+    rueckreiseBereich.innerHTML =
+      abschnittHtml("Rückreise", `<div class="kartenreihe">${karteHtml(karten.rueckreise, "")}</div>`);
+  }
+
+  document.getElementById("volltext-inhalt").textContent = daten.text +
+    (daten.meldungen && daten.meldungen.length ? "\n\n" + daten.meldungen.join("\n") : "");
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reisebot</title>
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --flaeche: #ffffff;
+    --rand: #e2ddd4;
+    --text: #2b2924;
+    --text-schwach: #756f63;
+    --akzent: #2f6f4f;
+    --akzent-hell: #eaf3ee;
+    --bot-blase: #eeece6;
+    --nutzer-blase: var(--akzent);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  main {
+    width: 100%;
+    max-width: 760px;
+    padding: 24px 16px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  /* Iteration 2, Korrektur nach echtem Browser-Test (siehe
+     doku/29_stage29_layout_chat_bis_abschluss_zentriert/README.md): WÄHREND des Gesprächs bleibt
+     es bei der ursprünglichen, einspaltigen, zentrierten Chat-Ansicht (siehe `main` oben) – vom
+     Reiseplan-Bereich ist nichts zu sehen, noch nicht einmal ein Platzhalter, solange nicht
+     wirklich ein fertiger Plan vorliegt. ERST wenn die Planung abgeschlossen ist, setzt das
+     Frontend die Klasse "abgeschlossen" auf <main> (siehe zeigeErgebnis() im Skript unten) und
+     wechselt AB DIESEM ZEITPUNKT auf ein Zwei-Spalten-Layout: Chat klein/kompakt links, der
+     fertige Reiseplan groß und zentral im Vordergrund rechts. Nur ab einer Mindestbreite (auf
+     einem Handy bleibt es gestapelt, Chat oben, Plan darunter – kein Platz für zwei Spalten).
+
+     Weitere Korrektur nach zweitem Nutzerfeedback (siehe
+     doku/30_stage30_zeit_fotos_verleih_layout_avatar/README.md): der Chat saß bisher oben am Rand
+     ("position: sticky; top: 24px"), wirkte dadurch in die Ecke gedrängt statt wie ein bewusst
+     platziertes, kleineres Nebenelement. Jetzt vertikal MITTIG im sichtbaren Bereich (sticky +
+     top:50%/translateY-Trick, bleibt beim Scrollen durch einen langen Reiseplan weiterhin
+     sichtbar, aber eben zentriert statt oben klebend), spürbar schmaler, mit deutlich mehr Abstand
+     zum Reiseplan (größeres gap) und mehr Luft am linken/rechten Rand (größeres Innenpolster), damit
+     der Reiseplan als der optisch dominante, zentrale Bereich wirkt. */
+  @media (min-width: 980px) {
+    main.abgeschlossen {
+      max-width: 1400px;
+      padding-left: 48px;
+      padding-right: 48px;
+      display: grid;
+      grid-template-columns: minmax(260px, 320px) 1fr;
+      grid-template-areas: "kopf kopf" "chat ergebnis";
+      align-items: start;
+      column-gap: 56px;
+      row-gap: 24px;
+    }
+    main.abgeschlossen > header { grid-area: kopf; }
+    main.abgeschlossen > #chat {
+      grid-area: chat;
+      position: sticky;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    main.abgeschlossen > #chat #verlauf { max-height: 38vh; }
+    main.abgeschlossen > #ergebnis { grid-area: ergebnis; }
+  }
+  header h1 {
+    font-size: 1.4rem;
+    margin: 0 0 4px;
+  }
+  header p {
+    margin: 0;
+    color: var(--text-schwach);
+    font-size: 0.9rem;
+  }
+  #chat {
+    background: var(--flaeche);
+    border: 1px solid var(--rand);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #verlauf {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 55vh;
+    overflow-y: auto;
+  }
+  .nachricht {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    font-size: 0.95rem;
+  }
+  .nachricht.bot {
+    background: var(--bot-blase);
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+  }
+  .nachricht.nutzer {
+    background: var(--nutzer-blase);
+    color: #fff;
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+  }
+  .nachricht.system {
+    align-self: center;
+    color: var(--text-schwach);
+    font-size: 0.85rem;
+    font-style: italic;
+  }
+  /* Iteration 2, Punkt 5 (Bot-Avatar): schlichtes rundes Icon links neben jeder Bot-Sprechblase –
+     bewusst kein Name/Charakter, nur ein wiedererkennbares visuelles Signal. */
+  .nachricht-zeile {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    max-width: 85%;
+    align-self: flex-start;
+  }
+  .nachricht-zeile .nachricht.bot {
+    align-self: auto;
+    max-width: 100%;
+    flex: 1;
+    min-width: 0;
+  }
+  /* Nutzerwunsch: ein eigener, kleiner Bot-Charakter mit Kopf+Oberkörper (Original-SVG,
+     static/img/avatar.svg) statt eines Emojis – bringt seine Form/Farbe schon selbst mit, deshalb
+     hier keine eigene Kreis-/Hintergrundfarbe mehr wie beim vorherigen Emoji-Avatar. */
+  .avatar {
+    flex-shrink: 0;
+    width: 30px;
+    height: 36px;
+    display: block;
+  }
+  /* Iteration 2, Punkt 4 (Ladeindikator): allgemeine "Bot schreibt"-Animation für die normale
+     Wartezeit nach dem Senden, verschwindet sobald irgendeine Antwort ankommt. */
+  .nachricht.tippt {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: 12px 14px;
+  }
+  .nachricht.tippt span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-schwach);
+    animation: tippt-punkt 1.2s infinite ease-in-out;
+  }
+  .nachricht.tippt span:nth-child(2) { animation-delay: 0.2s; }
+  .nachricht.tippt span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes tippt-punkt {
+    0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+    40% { opacity: 1; transform: translateY(-3px); }
+  }
+  /* Iteration 2, Punkt 3 (Schnellantworten): vom LLM optional vorgeschlagene Klick-Chips unter der
+     jeweiligen Bot-Nachricht – reine Eingabehilfe, das Textfeld bleibt daneben immer nutzbar. */
+  .schnellantworten {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-self: flex-start;
+    max-width: 85%;
+    margin-left: 34px;
+  }
+  .schnellantwort-chip {
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--akzent);
+    background: var(--akzent-hell);
+    color: var(--akzent);
+    font-size: 0.85rem;
+  }
+  .schnellantwort-chip:hover { background: var(--akzent); color: #fff; }
+  /* Iteration 2, Korrektur (siehe doku/29_.../README.md): eigene Sprechblase für den
+     Planungs-Status-Sonderfall im Chat selbst, statt den (bis dahin unsichtbaren) Reiseplan-
+     Bereich vorzeitig zu zeigen. */
+  .nachricht.planungs-status { font-style: italic; }
+  .hotel-karte-wrapper {
+    padding: 0;
+    background: transparent;
+    width: 220px;
+    max-width: 220px;
+  }
+  .hotel-karte-wrapper .karte { border-radius: 14px; border-bottom-left-radius: 4px; }
+  form#eingabeform {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid var(--rand);
+  }
+  #eingabe {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid var(--rand);
+    border-radius: 8px;
+    font-size: 0.95rem;
+  }
+  button {
+    padding: 10px 18px;
+    border: none;
+    border-radius: 8px;
+    background: var(--akzent);
+    color: #fff;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #mikrofon, #vorlesen {
+    background: var(--bot-blase);
+    color: var(--text);
+    padding: 10px 14px;
+    flex-shrink: 0;
+  }
+  #mikrofon.aktiv { background: #d64545; color: #fff; }
+  #vorlesen.aktiv { background: var(--akzent); color: #fff; }
+
+  #ergebnis { display: none; flex-direction: column; gap: 18px; }
+  #ergebnis h2 { margin: 0; font-size: 1.2rem; }
+  .nudge {
+    background: var(--akzent-hell);
+    border: 1px solid var(--akzent);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    white-space: pre-wrap;
+  }
+  .kartenreihe {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .karte {
+    background: var(--flaeche);
+    border: 1px solid var(--rand);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .karte img {
+    width: 100%;
+    height: 130px;
+    object-fit: cover;
+    display: block;
+    background: var(--bot-blase);
+  }
+  .karte .karte-inhalt {
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .karte .karte-inhalt strong { font-size: 0.95rem; }
+  .karte .karte-inhalt span { font-size: 0.82rem; color: var(--text-schwach); }
+  .karte .karte-inhalt a { font-size: 0.82rem; color: var(--akzent); text-decoration: none; }
+  .karte .karte-inhalt a:hover { text-decoration: underline; }
+  .tag-titel { font-weight: 600; margin: 8px 0 -4px; }
+  .karte.vorschlag { border-style: dashed; border-color: var(--akzent); }
+  .vorschlag-badge {
+    align-self: flex-start;
+    background: var(--akzent-hell);
+    color: var(--akzent);
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .vorschlaege-rahmen {
+    border: 1px dashed var(--rand);
+    border-radius: 12px;
+    padding: 10px;
+    margin-top: 6px;
+  }
+  .vorschlaege-titel {
+    font-size: 0.78rem;
+    color: var(--text-schwach);
+    margin-bottom: 8px;
+  }
+  #tage-bereich p { color: var(--text-schwach); font-size: 0.9rem; }
+  details#volltext {
+    background: var(--flaeche);
+    border: 1px solid var(--rand);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  details#volltext pre { white-space: pre-wrap; font-family: inherit; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<main id="app">
+  <header>
+    <h1>Reisebot</h1>
+    <p>Reiseplanungs-Prototyp (Masterarbeit) – erzähl mir, was dir für eine Reise vorschwebt.</p>
+  </header>
+
+  <section id="chat">
+    <div id="verlauf"></div>
+    <form id="eingabeform">
+      <input id="eingabe" type="text" autocomplete="off" placeholder="Antwort eingeben oder sprechen ..." />
+      <button type="button" id="mikrofon" title="Sprechen (Mikrofon des Geräts)">🎤</button>
+      <button type="button" id="vorlesen" title="Antworten des Bots vorlesen (Lautsprecher des Geräts)">🔊</button>
+      <button type="submit" id="senden">Senden</button>
+    </form>
+  </section>
+
+  <section id="ergebnis">
+    <h2>Dein Reiseplan</h2>
+    <div id="nudge" class="nudge" style="display:none"></div>
+    <div id="hinreise-bereich"></div>
+    <div id="unterkunft-bereich"></div>
+    <div id="verleih-bereich"></div>
+    <div id="tage-bereich"></div>
+    <div id="weitere-bereich"></div>
+    <div id="rueckreise-bereich"></div>
+    <details id="volltext">
+      <summary>Vollständiger Reiseplan als Text</summary>
+      <pre id="volltext-inhalt"></pre>
+    </details>
+  </section>
+</main>
+
+<script>
+const verlauf = document.getElementById("verlauf");
+const form = document.getElementById("eingabeform");
+const eingabe = document.getElementById("eingabe");
+const sendenKnopf = document.getElementById("senden");
+const mikrofonKnopf = document.getElementById("mikrofon");
+const vorlesenKnopf = document.getElementById("vorlesen");
+
+// Iteration 2, Punkt 5 (Bot-Avatar): schlichtes rundes Icon links neben jeder Bot-Sprechblase,
+// siehe doku/28_stage28_iteration2_ux_feedback_konzepte/README.md.
+function erzeugeAvatar() {
+  // Nutzerwunsch (Beispielbild als Stilvorlage): statt eines Emojis ein eigener, kleiner
+  // Bot-Charakter mit Kopf UND angedeutetem Oberkörper – komplett neu gezeichnet
+  // (static/img/avatar.svg), damit kein fremdes Bild kopiert wird, nur die Grundidee
+  // (freundliches, rundes Bot-Gesicht) aufgegriffen.
+  const avatar = document.createElement("img");
+  avatar.className = "avatar";
+  avatar.src = "/static/img/avatar.svg";
+  avatar.alt = "";
+  avatar.setAttribute("aria-hidden", "true");
+  return avatar;
+}
+
+function anhaengen(text, klasse) {
+  const el = document.createElement("div");
+  el.className = "nachricht " + klasse;
+  el.textContent = text;
+  if (klasse === "bot") {
+    const zeile = document.createElement("div");
+    zeile.className = "nachricht-zeile";
+    zeile.appendChild(erzeugeAvatar());
+    zeile.appendChild(el);
+    verlauf.appendChild(zeile);
+  } else {
+    verlauf.appendChild(el);
+  }
+  verlauf.scrollTop = verlauf.scrollHeight;
+  return el;
+}
+
+// Iteration 2, Punkt 4 (Ladeindikator, allgemeiner Fall): kurze "Bot schreibt"-Animation direkt
+// nach dem Senden, verschwindet sobald irgendeine Serverantwort ankommt (siehe Nachrichten-Listener
+// unten). Reine Frontend-Anzeige, kein Server-Signal nötig für diesen allgemeinen Fall.
+function zeigeTippt() {
+  entferneTippt();
+  const bubble = document.createElement("div");
+  bubble.className = "nachricht bot tippt";
+  bubble.innerHTML = "<span></span><span></span><span></span>";
+  const zeile = document.createElement("div");
+  zeile.id = "tippt-anzeige";
+  zeile.className = "nachricht-zeile";
+  zeile.appendChild(erzeugeAvatar());
+  zeile.appendChild(bubble);
+  verlauf.appendChild(zeile);
+  verlauf.scrollTop = verlauf.scrollHeight;
+}
+
+function entferneTippt() {
+  const el = document.getElementById("tippt-anzeige");
+  if (el) el.remove();
+}
+
+// Iteration 2, Punkt 3 (Schnellantworten): vom LLM optional vorgeschlagene Klick-Chips unter der
+// jeweils letzten Bot-Nachricht. Reine Eingabehilfe – das Textfeld bleibt daneben IMMER nutzbar,
+// ein Klick sendet die Option genauso wie eine getippte Antwort. Alte Chips verschwinden, sobald
+// irgendeine neue Nachricht abgeschickt wird (siehe sendeNachricht), damit nie veraltete Optionen
+// anklickbar herumstehen.
+let aktuelleSchnellantwortenZeile = null;
+
+function zeigeSchnellantworten(optionen) {
+  entferneSchnellantworten();
+  const zeile = document.createElement("div");
+  zeile.className = "schnellantworten";
+  optionen.forEach((option) => {
+    const knopf = document.createElement("button");
+    knopf.type = "button";
+    knopf.className = "schnellantwort-chip";
+    knopf.textContent = option;
+    knopf.addEventListener("click", () => sendeNachricht(option));
+    zeile.appendChild(knopf);
+  });
+  verlauf.appendChild(zeile);
+  verlauf.scrollTop = verlauf.scrollHeight;
+  aktuelleSchnellantwortenZeile = zeile;
+}
+
+function entferneSchnellantworten() {
+  if (aktuelleSchnellantwortenZeile) {
+    aktuelleSchnellantwortenZeile.remove();
+    aktuelleSchnellantwortenZeile = null;
+  }
+}
+
+const protokoll = location.protocol === "https:" ? "wss:" : "ws:";
+const socket = new WebSocket(protokoll + "//" + location.host + "/ws/chat");
+
+socket.addEventListener("open", () => {
+  anhaengen("Verbunden – warte auf die erste Frage ...", "system");
+});
+
+socket.addEventListener("close", () => {
+  eingabe.disabled = true;
+  sendenKnopf.disabled = true;
+  mikrofonKnopf.disabled = true;
+});
+
+socket.addEventListener("error", () => {
+  anhaengen("Verbindungsfehler.", "system");
+});
+
+socket.addEventListener("message", (ereignis) => {
+  // Egal welche Art von Nachricht ankommt – die "Bot schreibt"-Animation hat ihren Zweck erfüllt.
+  entferneTippt();
+  const daten = JSON.parse(ereignis.data);
+  if (daten.typ === "bot") {
+    anhaengen(daten.text, "bot");
+    liesVor(daten.text);
+    if (daten.schnellantworten && daten.schnellantworten.length) {
+      zeigeSchnellantworten(daten.schnellantworten);
+    }
+  } else if (daten.typ === "hotel_karte") {
+    zeigeHotelKarteImVerlauf(daten);
+  } else if (daten.typ === "status") {
+    zeigePlanungsStatus(daten.phase);
+  } else if (daten.typ === "ergebnis") {
+    zeigeErgebnis(daten);
+    eingabe.disabled = true;
+    sendenKnopf.disabled = true;
+    mikrofonKnopf.disabled = true;
+  }
+});
+
+// Iteration 2, Punkt 4 (Ladeindikator, Sonderfall): eigenes, deutlicheres Signal für den einen
+// bekannten Fall, in dem die finale Planung wirklich lange dauern kann (Barrierefreiheits-
+// Einzelprüfung je Kandidat, siehe CLAUDE.md "Performance-Hinweis"). Korrektur nach echtem
+// Browser-Test (siehe doku/29_stage29_layout_chat_bis_abschluss_zentriert/README.md): erscheint
+// als eigene Sprechblase IM CHAT (wie die Tipp-Animation, die sie ersetzt) statt den bis dahin
+// unsichtbaren Reiseplan-Bereich schon vorzeitig aufzudecken – der Nutzer soll vor Abschluss noch
+// gar nicht sehen, wo/wie der Reiseplan später erscheint.
+function zeigePlanungsStatus(phase) {
+  if (phase !== "plant_reise") return;
+  entferneTippt();
+  const bubble = document.createElement("div");
+  bubble.className = "nachricht bot planungs-status";
+  bubble.textContent = "Reiseroute wird berechnet – kann bei vielen Kandidaten etwas dauern ...";
+  const zeile = document.createElement("div");
+  zeile.className = "nachricht-zeile";
+  zeile.appendChild(erzeugeAvatar());
+  zeile.appendChild(bubble);
+  verlauf.appendChild(zeile);
+  verlauf.scrollTop = verlauf.scrollHeight;
+}
+
+function sendeNachricht(text) {
+  const bereinigt = text.trim();
+  if (!bereinigt) return;
+  entferneSchnellantworten();
+  anhaengen(bereinigt, "nutzer");
+  socket.send(JSON.stringify({ text: bereinigt }));
+  zeigeTippt();
+  eingabe.value = "";
+}
+
+form.addEventListener("submit", (ereignis) => {
+  ereignis.preventDefault();
+  sendeNachricht(eingabe.value);
+});
+
+// Mikrofon (Spracheingabe) + Vorlesefunktion (Sprachausgabe) – Standardmikrofon/-lautsprecher des
+// Nutzergeräts über die Web Speech API des Browsers, KEINE Serverbeteiligung (anders als
+// AUDIO_MODUS in chat.py, das auf ein Mikrofon/Lautsprecher am SERVER angewiesen wäre – nutzlos
+// für einen entfernten Browser-Client). Der Chat läuft danach unverändert genauso weiter, eine
+// erkannte Äußerung wird wie eine getippte Nachricht verschickt.
+const SpracherkennungKlasse = window.SpeechRecognition || window.webkitSpeechRecognition;
+let vorlesenAktiv = false;
+
+function aktualisiereVorlesenKnopf() {
+  vorlesenKnopf.classList.toggle("aktiv", vorlesenAktiv);
+}
+
+vorlesenKnopf.addEventListener("click", () => {
+  vorlesenAktiv = !vorlesenAktiv;
+  aktualisiereVorlesenKnopf();
+  if (!vorlesenAktiv && "speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+});
+
+// Deutsche Stimmen des Browsers/Betriebssystems für die Vorlesefunktion – `getVoices()` liefert
+// beim allerersten Aufruf oft noch eine leere Liste (Stimmen werden asynchron nachgeladen), daher
+// zusätzlich auf das "voiceschanged"-Ereignis hören und die Liste dann aktualisieren.
+let deutscheStimmen = [];
+
+function aktualisiereStimmenListe() {
+  deutscheStimmen = window.speechSynthesis.getVoices().filter((stimme) => stimme.lang?.toLowerCase().startsWith("de"));
+}
+
+if ("speechSynthesis" in window) {
+  aktualisiereStimmenListe();
+  window.speechSynthesis.onvoiceschanged = aktualisiereStimmenListe;
+}
+
+function waehleNatuerlicheStimme() {
+  if (!deutscheStimmen.length) return null;
+  // Netzwerk-/Cloud-Stimmen (z.B. "Google Deutsch") klingen deutlich natürlicher als die
+  // vorinstallierten lokalen System-Stimmen ("Microsoft Hedda" u.ä.) – wo verfügbar, bevorzugen.
+  return (
+    deutscheStimmen.find((stimme) => /google/i.test(stimme.name))
+    || deutscheStimmen.find((stimme) => !stimme.localService)
+    || deutscheStimmen[0]
+  );
+}
+
+function liesVor(text) {
+  if (!vorlesenAktiv || !("speechSynthesis" in window)) return;
+  const aeusserung = new SpeechSynthesisUtterance(text);
+  aeusserung.lang = "de-DE";
+  const stimme = waehleNatuerlicheStimme();
+  if (stimme) aeusserung.voice = stimme;
+  window.speechSynthesis.speak(aeusserung);
+}
+
+if (!SpracherkennungKlasse) {
+  // z.B. Firefox ohne Spracherkennungs-Unterstützung – Chat bleibt per Text/Vorlesen nutzbar.
+  mikrofonKnopf.disabled = true;
+  mikrofonKnopf.title = "Spracheingabe wird von diesem Browser nicht unterstützt (z.B. Firefox) – bitte Chrome/Edge/Safari verwenden oder weiter tippen.";
+} else {
+  const erkennung = new SpracherkennungKlasse();
+  erkennung.lang = "de-DE";
+  erkennung.continuous = false;
+  erkennung.interimResults = false;
+  let zuhoertGerade = false;
+
+  // BEHOBENER BUG: der Knopf wurde bisher SOFORT beim Klick rot markiert (optimistisch, noch bevor
+  // die Erkennung tatsächlich lief) und jeder weitere Klick rief erneut `start()` auf, obwohl eine
+  // Erkennung bereits lief – das wirft in allen Browsern einen synchronen `InvalidStateError`, den
+  // niemand sah, und `error`/`end` räumten den roten Zustand kommentarlos wieder ab ("leuchtet rot,
+  // hört sofort wieder auf, funktioniert nicht"). Jetzt: rot erst NACH dem echten "start"-Ereignis,
+  // ein zweiter Klick während des Zuhörens beendet die laufende Erkennung sauber (`stop()`) statt
+  // sie neu zu starten, und jeder Fehler bekommt eine sichtbare, erklärende Meldung im Chat.
+  erkennung.addEventListener("start", () => {
+    zuhoertGerade = true;
+    mikrofonKnopf.classList.add("aktiv");
+  });
+  erkennung.addEventListener("result", (ereignis) => {
+    const text = ereignis.results[0][0].transcript;
+    sendeNachricht(text);
+    // Erste Spracheingabe schaltet automatisch auch die Vorlesefunktion ein – wer mit dem Bot
+    // spricht, möchte vermutlich auch gesprochene Antworten hören (jederzeit wieder abschaltbar).
+    if (!vorlesenAktiv) {
+      vorlesenAktiv = true;
+      aktualisiereVorlesenKnopf();
+    }
+  });
+  erkennung.addEventListener("end", () => {
+    zuhoertGerade = false;
+    mikrofonKnopf.classList.remove("aktiv");
+  });
+  erkennung.addEventListener("error", (ereignis) => {
+    zuhoertGerade = false;
+    mikrofonKnopf.classList.remove("aktiv");
+    const meldung = mikrofonFehlermeldung(ereignis.error);
+    if (meldung) anhaengen(meldung, "system");
+  });
+
+  mikrofonKnopf.addEventListener("click", () => {
+    if (zuhoertGerade) {
+      erkennung.stop();
+      return;
+    }
+    try {
+      erkennung.start();
+    } catch (fehler) {
+      anhaengen("Spracherkennung konnte nicht gestartet werden – bitte kurz warten und erneut klicken.", "system");
+    }
+  });
+}
+
+function mikrofonFehlermeldung(code) {
+  switch (code) {
+    case "not-allowed":
+    case "permission-denied":
+      return "Mikrofonzugriff wurde verweigert – bitte in den Browser-/Systemeinstellungen für diese Seite erlauben und erneut klicken.";
+    case "audio-capture":
+      return "Kein Mikrofon gefunden – ist eins angeschlossen und als Standardgerät ausgewählt?";
+    case "no-speech":
+      return "Es wurde nichts gehört – bitte nach dem Klick direkt sprechen.";
+    case "network":
+      return (
+        "Der Spracherkennungsdienst des Browsers ist nicht erreichbar – NICHT zwingend fehlende " +
+        "Internetverbindung, oft eher ein Chromium-Browser ohne Google-API-Schlüssel (z.B. Brave, " +
+        "Opera) oder ein Adblocker/eine Firewall, die den Dienst blockiert. Mit Google Chrome/Edge " +
+        "prüfen, oder einfach normal tippen bzw. ein externes Diktier-Tool wie Whisper Flow " +
+        "verwenden, das direkt ins Textfeld schreibt."
+      );
+    case "aborted":
+      return null; // Nutzer hat selbst per Klick abgebrochen, keine Fehlermeldung nötig
+    default:
+      return `Spracherkennung fehlgeschlagen (${code}).`;
+  }
+}
+
+function karteHtml(karte, kategorieText) {
+  const bild = karte.foto_url
+    ? `<img src="${karte.foto_url}" alt="${escapeHtml(karte.name)}">`
+    : `<div style="height:130px;display:flex;align-items:center;justify-content:center;color:#999;font-size:0.8rem;background:var(--bot-blase);">Kein Foto verfügbar</div>`;
+  const link = karte.maps_link
+    ? `<a href="${karte.maps_link}" target="_blank" rel="noopener">Auf Google Maps ansehen</a>`
+    : "";
+  const routenLink = karte.routen_link
+    ? `<a href="${karte.routen_link}" target="_blank" rel="noopener">Route ansehen</a>`
+    : "";
+  const badge = karte.label ? `<span class="vorschlag-badge">${escapeHtml(karte.label)}</span>` : "";
+  const text = kategorieText || karte.beschreibung || "";
+  return `<div class="karte${karte.label ? " vorschlag" : ""}">
+    ${bild}
+    <div class="karte-inhalt">
+      ${badge}
+      <strong>${escapeHtml(karte.name)}</strong>
+      ${text ? `<span>${escapeHtml(text)}</span>` : ""}
+      ${link}
+      ${routenLink}
+    </div>
+  </div>`;
+}
+
+function zeigeHotelKarteImVerlauf(daten) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "nachricht bot hotel-karte-wrapper";
+  const preisText = daten.preis_pro_nacht_euro != null
+    ? `ca. ${Math.round(daten.preis_pro_nacht_euro)} € / Nacht (grobe Schätzung)`
+    : "";
+  wrapper.innerHTML = karteHtml(daten, preisText);
+  verlauf.appendChild(wrapper);
+  verlauf.scrollTop = verlauf.scrollHeight;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text ?? "";
+  return div.innerHTML;
+}
+
+function zeigeErgebnis(daten) {
+  // Korrektur nach echtem Browser-Test (siehe
+  // doku/29_stage29_layout_chat_bis_abschluss_zentriert/README.md): ERST jetzt, wo die Planung
+  // wirklich fertig ist, wechselt das Layout – vorher (siehe CSS) bleibt es bei der einspaltigen,
+  // zentrierten Chat-Ansicht ohne jede Andeutung, wo der Reiseplan später erscheinen wird.
+  document.getElementById("app").classList.add("abgeschlossen");
+  document.getElementById("ergebnis").style.display = "flex";
+
+  if (daten.nachhaltigkeits_nudge) {
+    const nudge = document.getElementById("nudge");
+    nudge.style.display = "block";
+    nudge.textContent = daten.nachhaltigkeits_nudge;
+  }
+
+  const karten = daten.karten || {};
+
+  const hinreiseBereich = document.getElementById("hinreise-bereich");
+  if (karten.hinreise) {
+    hinreiseBereich.innerHTML =
+      `<div class="tag-titel">Hinreise</div><div class="kartenreihe">${karteHtml(karten.hinreise, "")}</div>`;
+  }
+
+  const unterkunftBereich = document.getElementById("unterkunft-bereich");
+  if (karten.unterkunft) {
+    unterkunftBereich.innerHTML =
+      `<div class="tag-titel">Unterkunft</div><div class="kartenreihe">${karteHtml(karten.unterkunft, "")}</div>`;
+  }
+
+  // Iteration 2, Stage 30 (Nutzerfeedback): lokaler Verleih (F14) als eigene Karte direkt unter der
+  // Unterkunft, nicht mehr nur als Textsatz im vollständigen Reiseplan weiter unten.
+  const verleihBereich = document.getElementById("verleih-bereich");
+  if (karten.verleih) {
+    verleihBereich.innerHTML =
+      `<div class="tag-titel">Verleih vor Ort</div><div class="kartenreihe">${karteHtml(karten.verleih, karten.verleih.kategorie)}</div>`;
+  }
+
+  const tageBereich = document.getElementById("tage-bereich");
+  tageBereich.innerHTML = (karten.tage || []).map((tag) => {
+    const titel = "Tag " + tag.tag + (tag.ankunftstag ? " (Ankunft)" : "");
+    const besuche_html = tag.besuche.map((b) => {
+      const anfahrt = b.verkehrsmittel ? `Anfahrt ${b.verkehrsmittel} · ` : "";
+      return karteHtml(b, `${anfahrt}${b.kategorie} · ${b.ankunft} – ${b.abfahrt}`);
+    }).join("");
+    const vorschlaege = tag.vorschlaege || [];
+    const poiTeil = besuche_html
+      ? `<div class="kartenreihe">${besuche_html}</div>`
+      : (vorschlaege.length ? "" : "<p>Kein Programm eingeplant.</p>");
+    let vorschlagTeil = "";
+    if (vorschlaege.length) {
+      const vorschlaege_html = vorschlaege.map((v) => karteHtml(v, v.kategorie)).join("");
+      vorschlagTeil = `<div class="vorschlaege-rahmen"><div class="vorschlaege-titel">Vorschläge – nicht eingeplant, nicht Teil der optimierten Route</div><div class="kartenreihe">${vorschlaege_html}</div></div>`;
+    }
+    return `<div class="tag-titel">${titel}</div>${poiTeil}${vorschlagTeil}`;
+  }).join("");
+
+  const weitereBereich = document.getElementById("weitere-bereich");
+  if (karten.weitere_empfehlungen && karten.weitere_empfehlungen.length) {
+    const karten_html = karten.weitere_empfehlungen.map((p) => karteHtml(p, p.kategorie)).join("");
+    weitereBereich.innerHTML = `<div class="tag-titel">Weitere Empfehlungen</div><div class="kartenreihe">${karten_html}</div>`;
+  }
+
+  const rueckreiseBereich = document.getElementById("rueckreise-bereich");
+  if (karten.rueckreise) {
+    rueckreiseBereich.innerHTML =
+      `<div class="tag-titel">Rückreise</div><div class="kartenreihe">${karteHtml(karten.rueckreise, "")}</div>`;
+  }
+
+  document.getElementById("volltext-inhalt").textContent = daten.text +
+    (daten.meldungen && daten.meldungen.length ? "\n\n" + daten.meldungen.join("\n") : "");
+}
+</script>
+</body>
+</html>
